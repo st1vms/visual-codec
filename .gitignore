@@ -1,4 +1,8 @@
-
+*.json
+*.key
+*.cvector
+*.txt
+*.zip
 
 # VS Code
 .vscode/

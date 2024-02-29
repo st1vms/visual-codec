@@ -29,25 +29,6 @@ class Metadata:
     key_size: int
 
 
-def __pad_color_vector(
-    vector: str, frame_width: int, frame_height: int
-) -> tuple[str, int]:
-    m_len = len(vector)
-
-    frame_pixels = frame_width * frame_height
-
-    pad = 0
-
-    # Generate random padding unit
-    u = "1" if m_len % 2 else "0"
-    while m_len < frame_pixels or m_len % frame_pixels != 0:
-        vector += u
-        m_len += 1
-        pad += 1
-
-    return vector, pad
-
-
 def __bytes_to_binary_str(buf: bytes) -> str:
     return "".join([bin(b)[2:].zfill(8) for b in buf])
 
@@ -85,17 +66,24 @@ def __save_key_file(key: list[int], path: str):
             file.write(byte)
 
 
-def __save_key_file(key: list[int], path: str):
+def __save_key_file(key: list[tuple[int, int]], path: str):
     with open(path, "wb") as file:
-        for value in key:
-            byte = pack("B", value)
+        for a, b in key:
+            byte = pack("B", a)
+            file.write(byte)
+            byte = pack("B", b)
             file.write(byte)
 
 
-def __load_key_file(path: str) -> list[int]:
+def __load_key_file(path: str) -> list[tuple[int, int]]:
     with open(path, "rb") as file:
         byte_data = file.read()
-        key = list(byte_data)
+        key = []
+        for i in range(0, len(byte_data), 2):
+            a = byte_data[i]
+            b = byte_data[i + 1]
+            key.append((a, b))
+
         return key
 
 
@@ -184,14 +172,11 @@ def __deserialize(inp_data_path: str, metadata_path: str, output_dir_path: str):
 
     log.info("Reading color vector file: %s", inp_data_path)
     vector = __load_color_vector_file(inp_data_path)
-
     log.info("Reading metadata key file: %s", metadata.key_path)
     key = __load_key_file(metadata.key_path)
 
     log.info("Deserializing color vector...")
-    vector = ungroup_binstring(
-        vector, metadata.color_bitsize, metadata.zero_pad, metadata.one_pad, key
-    )
+    vector = ungroup_binstring(vector, metadata.zero_pad, metadata.one_pad, key)
 
     if metadata.exp_factor > 1:
         log.info("Shrinking expanded bits by a factor of %d", metadata.exp_factor)
@@ -264,7 +249,7 @@ def main() -> None:
     if not ospath.exists(inp_data_path):
         parser.error("input data path does not exist")
 
-    if not ospath.exists(args.output):
+    if not ospath.isdir(args.output):
         if (
             "y"
             != input(

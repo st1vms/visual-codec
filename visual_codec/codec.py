@@ -4,6 +4,7 @@
 # Bit expansion #
 #################
 
+
 def bit_vector_expand(vector: str, exp: int) -> str:
     """Expands each bit in the `vector` by `exp`"""
     e = ""
@@ -13,6 +14,7 @@ def bit_vector_expand(vector: str, exp: int) -> str:
             e += b
 
     return e
+
 
 def bit_vector_shrink(vector: str, exp: int) -> str:
     """Shrink expanded vector into original bit vector"""
@@ -25,9 +27,11 @@ def bit_vector_shrink(vector: str, exp: int) -> str:
         s += find_most_bit(list(vector[i : i + exp]))
     return s
 
+
 ########################
 # Codec implementation #
 ########################
+
 
 def __pad_vector(binstr: str, color_bitsize: int) -> tuple[str, int, int]:
     """Apply padding to grouped binstring and return padding dimensions"""
@@ -93,7 +97,9 @@ def __depad_vector(vector: str, zpad: int, opad: int) -> list[str]:
     return vector
 
 
-def group_binstring(binstr: str, color_bitsize: int) -> tuple[str, int, int, list[int]]:
+def group_binstring(
+    binstr: str, color_bitsize: int
+) -> tuple[str, int, int, list[tuple[int, int]]]:
     """Group binary string with each bit moved to form evenly chunks
 
     Returns a tuple with these objects in order:
@@ -104,48 +110,35 @@ def group_binstring(binstr: str, color_bitsize: int) -> tuple[str, int, int, lis
     - `list[int]` object storing the conversion keys
     """
 
-    k_list = []  # Key list
-    k = 0  # Key var
+    key = []
 
-    # Bitstring to bitlist
-    binstr = list(binstr)
+    new = list(binstr)
+    l = len(new)
 
-    j = -1  # Substitution index
-    for i in range(len(binstr) - 1):
-        # Increment key step while the substitution is not applied
-        k += 1
+    prev_i, prev_j = 0, 0
 
-        # Check if next bit differs
-        if binstr[i] != binstr[i + 1]:
-            # Check if this is the first bit differing,
-            # or if the substitution index needs to be moved
-            # to the start index of the next bit chunk
+    j = -1
+    for i in range(0, l - 1):
+        if new[i] != new[i + 1]:
+
             if j == -1 or (j + 1) % color_bitsize == 0:
-                j = i  # Update subst. index
-
-                # Add and resets Key
-                k_list.append(k)
-                k = 0
+                j = i
                 continue
 
-            # Apply bit substitution
-            binstr[j + 1], binstr[i + 1] = binstr[i + 1], binstr[j + 1]
+            key.append((i - prev_i, j - prev_j))
+            prev_i, prev_j = i, j
 
-            # Increment subst. index
+            new[i + 1], new[j + 1] = new[j + 1], new[i + 1]
             j += 1
 
-            # Add and resets Key
-            k_list.append(k)
-            k = 0
+    key.append((l - prev_i, l - prev_j))
 
     # Apply padding and return
-    binstr, zpad, opad = __pad_vector(binstr, color_bitsize)
-    return binstr, zpad, opad, k_list
+    binstr, zpad, opad = __pad_vector("".join(new), color_bitsize)
+    return binstr, zpad, opad, key
 
 
-def ungroup_binstring(
-    binstr: str, color_bitsize: int, zpad: int, opad: int, key_list: list[int]
-) -> str:
+def ungroup_binstring(binstr: str, zpad: int, opad: int, key_list: list[int]) -> str:
     """Deconvert grouped binary string into its original form
     by using the provided conversion keys
 
@@ -154,40 +147,15 @@ def ungroup_binstring(
 
     # Removes padding from binary string
     binstr = __depad_vector(binstr, zpad, opad)
-    vec_len = len(binstr)
 
-    # key step var and key list index
-    k_step, ki = 0, 0
-    klen = len(key_list)
-
-    j = -1  # Substitution index
-
-    # Deconvert the binary string into the original binary string
-    for i in range(vec_len - 1):
-        # Increment key step
-        k_step += 1
-
-        # No more substitutions
-        if ki >= klen:
-            break
-
-        if k_step == key_list[ki]:
-            # Substitution index was reached
-
-            # Resets the key step and increments the key index
-            k_step = 0
-            ki += 1
-
-            # Check if this is the first substitution index,
-            # or if the subst. index needs to be moved to the
-            # current index (next bit block)
-            if j == -1 or (j + 1) % color_bitsize == 0:
-                j = i
-                continue
-
-            # Apply bit substitution and increment subst. index
-            binstr[i + 1], binstr[j + 1] = binstr[j + 1], binstr[i + 1]
-            j += 1
+    # Perform deconversion using key
+    new = list(binstr)
+    l = len(new)
+    i, j = l, l
+    for ki, kj in key_list[::-1]:
+        i -= ki
+        j -= kj
+        new[j + 1], new[i + 1] = new[i + 1], new[j + 1]
 
     # Return original bistring
-    return "".join(binstr)
+    return "".join(new)
