@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""visual-codec proof of concept"""
+"""visual-codec compiler"""
 from os import getcwd, walk, mkdir
 from os import path as ospath
 from json import dump, load
@@ -83,7 +83,6 @@ def __load_key_file(path: str) -> list[tuple[int, int]]:
             a = byte_data[i]
             b = byte_data[i + 1]
             key.append((a, b))
-
         return key
 
 

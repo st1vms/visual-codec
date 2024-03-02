@@ -33,45 +33,49 @@ def bit_vector_shrink(vector: str, exp: int) -> str:
 ########################
 
 
-def __pad_vector(binstr: str, color_bitsize: int) -> tuple[str, int, int]:
-    """Apply padding to grouped binstring and return padding dimensions"""
+def __pad_vector(binstr: str, color_size: int) -> tuple[str, int, int]:
+    """Apply 0/1 padding to color vector"""
+    binlst = list(binstr)
 
-    # Works on list of bits
-    binstr = list(binstr)
+    zeros, ones = 0, 0
 
-    zeros, ones, zeros_ix, ones_ix = 0, 0, -1, -1
-    for i in range(1, len(binstr)):
-        # Traverse the bit string backwards counting 0 and 1
-        if binstr[-i] == "0":
+    diff_index = -1
+    first = binstr[-1]
+
+    for i in range(len(binstr) - 1, -1, -1):
+
+        if binstr[i] != first:
+            if diff_index != -1:
+                break
+            diff_index = i
+            first = binstr[i]
+
+        if binstr[i] == "0":
             zeros += 1
-        elif binstr[-i] == "1":
+        if binstr[i] == "1":
             ones += 1
 
-        # Check if the next bit differs
-        if binstr[-i - 1] != binstr[-i]:
-            if binstr[-i] == "0":
-                # Register this index as padding offset for 0
-                zeros_ix = i
-            else:
-                # Register this index as padding offset for 1
-                ones_ix = i
+    zpad, opad = 0, 0
+    if first == "0":
+        while ones % color_size != 0:
+            binlst.append("1")
+            opad += 1
+            ones += 1
+        while zeros % color_size != 0:
+            binlst.insert(diff_index, "0")
+            zpad += 1
+            zeros += 1
+    elif first == "1":
+        while zeros % color_size != 0:
+            binlst.append("0")
+            zpad += 1
+            zeros += 1
+        while ones % color_size != 0:
+            binlst.insert(diff_index, "1")
+            opad += 1
+            ones += 1
 
-            # End counting once both index were found
-            if zeros_ix != -1 and ones_ix != -1:
-                break
-
-    # Apply Zeros padding
-    if zeros % color_bitsize != 0:
-        for _ in range(color_bitsize - (zeros % color_bitsize)):
-            binstr.insert(-zeros_ix, "0")
-
-    # Apply Ones padding
-    if ones % color_bitsize != 0:
-        for _ in range(color_bitsize - (ones % color_bitsize)):
-            binstr.insert(-ones_ix, "1")
-
-    # Return padded bit string along padding dimensions
-    return "".join(binstr), zeros % color_bitsize, ones % color_bitsize
+    return "".join(binlst), zpad, opad
 
 
 def __depad_vector(vector: str, zpad: int, opad: int) -> list[str]:
@@ -87,10 +91,12 @@ def __depad_vector(vector: str, zpad: int, opad: int) -> list[str]:
             if opad > 0:
                 del vector[-i]
                 opad -= 1
+                continue
         elif zpad > 0:
             # Remove Ones padding
             del vector[-i]
             zpad -= 1
+            continue
 
         i += 1
 

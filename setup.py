@@ -28,6 +28,7 @@ setup(
         "console_scripts": [
             # vcc console script
             "vcc=visual_codec.cli.vcc:main",
+            "vcgen=visual_codec.cli.vcgen:main",
         ]
     },
     classifiers=[
