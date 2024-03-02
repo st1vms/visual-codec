@@ -23,11 +23,8 @@ class Metadata:
 
     exp_factor: int
     color_bitsize: int
-    original_data_bits: int
     zero_pad: int
     one_pad: int
-    key_path: str
-    key_size: int
     video_pad: int
 
 
@@ -108,7 +105,6 @@ def serialize(
         data_bytes = fp.read()
 
     bitstr = __bytes_to_binary_str(data_bytes)
-    original_len = len(bitstr)
 
     # Expand bit string by exp_factor
     if exp_factor > 1:
@@ -117,13 +113,7 @@ def serialize(
 
     bitstr, zpad, opad, key = group_binstring(bitstr, color_bitsize)
 
-    vector_path = ospath.join(output_path, f"{base_name}.cvector")
-
     vector_bytes = __binary_str_to_bytes(bitstr)
-    with open(vector_path, "wb") as fp:
-        fp.write(vector_bytes)
-
-    log.info("Color vector saved into: %s", vector_path)
 
     key_path = ospath.join(output_path, base_name)
     key_path = __save_key_file(key, key_path)
@@ -140,11 +130,8 @@ def serialize(
         Metadata(
             exp_factor,
             color_bitsize,
-            original_len,
             zpad,
             opad,
-            key_path,
-            len(key),
             n_pad,
         ),
         meta_path,
@@ -152,15 +139,17 @@ def serialize(
     log.info("Saved metadata json file into: %s", meta_path)
 
 
-def deserialize(input_video_fpath: str, metadata_fpath: str, output_path: str) -> None:
+def deserialize(
+    input_video_fpath: str, key_fpath: str, metadata_fpath: str, output_path: str
+) -> None:
     """Deserialize video into its original data"""
     metadata = __load_metadata_file(metadata_fpath)
 
     log.info("Loaded metadata file: %s", metadata_fpath)
 
-    key = __load_key_file(metadata.key_path)
+    key = __load_key_file(key_fpath)
 
-    log.info("Loaded key file: %s", metadata.key_path)
+    log.info("Loaded key file: %s", key_fpath)
 
     vector = video_to_cvector(input_video_fpath, metadata.video_pad)
 
@@ -201,6 +190,13 @@ def main() -> None:
         type=str,
         default="352x240",
         help="Frame size in pixels for output video, write it as such: 352x240",
+    )
+    parser.add_argument(
+        "-k",
+        "--key",
+        type=str,
+        default=None,
+        help=".key file path used for deserialization",
     )
     parser.add_argument(
         "-m",
@@ -252,7 +248,7 @@ def main() -> None:
         )
     elif args.video_file:
         # Deserialize video
-        deserialize(args.video_file, args.metadata, args.output)
+        deserialize(args.video_file, args.key, args.metadata, args.output)
     else:
         parser.error("Unknown arguments")
 
