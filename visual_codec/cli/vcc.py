@@ -1,19 +1,20 @@
-#!/usr/bin/env python3
-"""visual-codec compiler"""
-from os import getcwd, walk, mkdir
+"""visual-codec CLI utility"""
+
+from os import getcwd, remove, mkdir
 from os import path as ospath
-from json import dump, load
 from struct import pack
-from zipfile import ZipFile
-from argparse import ArgumentParser
+from json import dump, load
+from gzip import open as gzip_open
 from dataclasses import dataclass, asdict
-from ..logger import log
-from ..codec import (
-    bit_vector_expand,
-    bit_vector_shrink,
+from argparse import ArgumentParser
+from visual_codec.codec import (
     group_binstring,
     ungroup_binstring,
+    bit_vector_expand,
+    bit_vector_shrink,
 )
+from visual_codec.vidmaker import cvector_to_video, video_to_cvector
+from visual_codec.logger import log
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,7 @@ class Metadata:
     one_pad: int
     key_path: str
     key_size: int
+    video_pad: int
 
 
 def __bytes_to_binary_str(buf: bytes) -> str:
@@ -41,63 +43,38 @@ def __binary_str_to_bytes(binary_str: str) -> bytes:
     return bytes(byte_list)
 
 
-def __datafile_to_zip(input_data_path: str, output_data_path: str):
-    with ZipFile(output_data_path, "w") as zip_file:
-        if ospath.isfile(input_data_path):
-            zip_file.write(input_data_path, ospath.basename(input_data_path))
-        elif ospath.isdir(input_data_path):
-            for root, _, files in walk(input_data_path):
-                for file in files:
-                    file_path = ospath.join(root, file)
-                    zip_file.write(
-                        file_path, ospath.relpath(file_path, input_data_path)
-                    )
-
-
-def __bytes_to_zip(buf: bytes, output_data_path: str):
-    with open(output_data_path, "wb") as fp:
-        fp.write(buf)
-
-
-def __save_key_file(key: list[int], path: str):
-    with open(path, "wb") as file:
-        for value in key:
-            byte = pack("B", value)
-            file.write(byte)
-
-
 def __save_key_file(key: list[tuple[int, int]], path: str):
-    with open(path, "wb") as file:
+
+    with open(f"{path}.key.data", "wb") as file:
         for a, b in key:
             byte = pack("B", a)
             file.write(byte)
             byte = pack("B", b)
             file.write(byte)
 
+    compressed_key_path = f"{path}.key"
+    with open(f"{path}.key.data", "rb") as file:
+        with gzip_open(compressed_key_path, "wb") as compressed_file:
+            compressed_file.write(file.read())
+
+    remove(f"{path}.key.data")
+
+    return compressed_key_path
+
 
 def __load_key_file(path: str) -> list[tuple[int, int]]:
-    with open(path, "rb") as file:
+    with gzip_open(path, "rb") as compressed_file:
+        with open(f"{path}.key.data", "wb") as file:
+            file.write(compressed_file.read())
+    key = []
+    with open(f"{path}.key.data", "rb") as file:
         byte_data = file.read()
-        key = []
         for i in range(0, len(byte_data), 2):
             a = byte_data[i]
             b = byte_data[i + 1]
             key.append((a, b))
-        return key
-
-
-def __save_color_vector_file(vector: str, path: str):
-    with open(path, "wb") as file:
-        for i in range(0, len(vector), 8):
-            byte = int(vector[i : i + 8], 2)
-            file.write(byte.to_bytes(1, byteorder="little"))
-
-
-def __load_color_vector_file(path: str) -> str:
-    with open(path, "rb") as file:
-        byte_data = file.read()
-        binary_str = __bytes_to_binary_str(byte_data)
-        return binary_str
+    remove(f"{path}.key.data")
+    return key
 
 
 def __save_metadata_file(metadata: Metadata, meta_path: str):
@@ -110,23 +87,27 @@ def __load_metadata_file(metadata_path: str) -> Metadata:
         return Metadata(**load(fp))
 
 
-def __serialize(
-    data_path: str, exp_factor: int, color_bitsize: int, output_dir_path: str
-):
-    # Compress data into zip
-    base_name = ospath.splitext(ospath.basename(data_path))[0]
+def serialize(
+    input_data_fpath: str,
+    exp_factor: int,
+    color_bitsize: int,
+    frame_width: str,
+    frame_height: str,
+    output_path: str,
+) -> None:
+    """Serialize .zip file into video"""
 
-    log.info("Zipping data: %s", data_path)
-    zip_path = ospath.join(output_dir_path, f"{base_name}.zip")
-    __datafile_to_zip(data_path, zip_path)
-    log.info("Data compressed into zip: %s", zip_path)
+    # TODO Replace with auto zip conversion
+    if ospath.splitext(input_data_fpath)[1] != ".zip":
+        log.error("Only .zip files are supported conversion!")
+        return
 
-    with open(zip_path, "rb") as fp:
+    base_name = ospath.splitext(ospath.basename(input_data_fpath))[0]
+
+    with open(input_data_fpath, "rb") as fp:
         data_bytes = fp.read()
 
-    # Bytes to bit string
     bitstr = __bytes_to_binary_str(data_bytes)
-
     original_len = len(bitstr)
 
     # Expand bit string by exp_factor
@@ -134,21 +115,27 @@ def __serialize(
         log.info("Applying bit expansion of %d", exp_factor)
         bitstr = bit_vector_expand(bitstr, exp_factor)
 
-    # Apply color matrix conversion and save metadata
-    # Also retrieve padding bits (can be either two groups of padding or one)
-    log.info("Converting %d bits into a color vector...", len(bitstr))
     bitstr, zpad, opad, key = group_binstring(bitstr, color_bitsize)
 
-    vector_path = ospath.join(output_dir_path, f"{base_name}.cvector")
-    __save_color_vector_file(bitstr, vector_path)
+    vector_path = ospath.join(output_path, f"{base_name}.cvector")
+
+    vector_bytes = __binary_str_to_bytes(bitstr)
+    with open(vector_path, "wb") as fp:
+        fp.write(vector_bytes)
 
     log.info("Color vector saved into: %s", vector_path)
 
-    key_path = ospath.join(output_dir_path, f"{base_name}.key")
-    __save_key_file(key, key_path)
+    key_path = ospath.join(output_path, base_name)
+    key_path = __save_key_file(key, key_path)
     log.info("Key saved into: %s", key_path)
 
-    meta_path = ospath.join(output_dir_path, f"{base_name}_metadata.json")
+    output_video_path = ospath.join(output_path, base_name + ".mp4")
+    n_pad = cvector_to_video(
+        vector_bytes, output_video_path, frame_width, frame_height, fps=1
+    )
+    log.info("Saved video file into: %s", output_video_path)
+
+    meta_path = ospath.join(output_path, base_name + "_metadata.json")
     __save_metadata_file(
         Metadata(
             exp_factor,
@@ -158,46 +145,45 @@ def __serialize(
             opad,
             key_path,
             len(key),
+            n_pad,
         ),
         meta_path,
     )
-
     log.info("Saved metadata json file into: %s", meta_path)
 
 
-def __deserialize(inp_data_path: str, metadata_path: str, output_dir_path: str):
-    log.info("Reading metadata file: %s", metadata_path)
-    metadata: Metadata = __load_metadata_file(metadata_path)
+def deserialize(input_video_fpath: str, metadata_fpath: str, output_path: str) -> None:
+    """Deserialize video into its original data"""
+    metadata = __load_metadata_file(metadata_fpath)
 
-    log.info("Reading color vector file: %s", inp_data_path)
-    vector = __load_color_vector_file(inp_data_path)
-    log.info("Reading metadata key file: %s", metadata.key_path)
+    log.info("Loaded metadata file: %s", metadata_fpath)
+
     key = __load_key_file(metadata.key_path)
 
-    log.info("Deserializing color vector...")
-    vector = ungroup_binstring(vector, metadata.zero_pad, metadata.one_pad, key)
+    log.info("Loaded key file: %s", metadata.key_path)
+
+    vector = video_to_cvector(input_video_fpath, metadata.video_pad)
+
+    log.info("Parsed cvector from video: %s", metadata.video_pad)
+
+    bitstr = __bytes_to_binary_str(vector)
+
+    log.info("Performing deconversion using key...")
+    original = ungroup_binstring(bitstr, metadata.zero_pad, metadata.one_pad, key)
 
     if metadata.exp_factor > 1:
-        log.info("Shrinking expanded bits by a factor of %d", metadata.exp_factor)
-        vector = bit_vector_shrink(vector, metadata.exp_factor)
+        original = bit_vector_shrink(original, metadata.exp_factor)
+        log.info("Shrinked data with exp_factor = %d", metadata.exp_factor)
 
-    if len(vector) != metadata.original_data_bits:
-        log.warning(
-            "Deconverted data differs of %d bits.",
-            abs(len(vector) - metadata.original_data_bits),
-        )
-        if "y" != input("\nDo you still want to write the data zip?").strip().lower():
-            return
+    data_bytes = __binary_str_to_bytes(original)
 
-    zip_path = ospath.join(
-        output_dir_path,
-        f"{ospath.splitext(ospath.basename(metadata.key_path))[0]}_data.zip",
-    )
+    bname = ospath.splitext(ospath.basename(input_video_fpath))[0]
+    out_path = ospath.join(output_path, bname + ".zip")
 
-    buf = __binary_str_to_bytes(vector)
-    __bytes_to_zip(buf, zip_path)
+    with open(out_path, "wb") as fp:
+        fp.write(data_bytes)
 
-    log.info("Saved data zip into: %s", zip_path)
+    log.info("File saved into: %s", out_path)
 
 
 def main() -> None:
@@ -205,13 +191,23 @@ def main() -> None:
     parser = ArgumentParser(description="visual-codec color vector (de)compiler")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("-f", "--file", help="File path to convert")
-    group.add_argument("-d", "--data-dir", help="Directory path to convert")
     group.add_argument(
-        "-g", "--get-data", help="File path of the image/video to restore data from"
+        "-v", "--video-file", help="File path of the image/video to restore data from"
     )
 
     parser.add_argument(
-        "-m", "--metadata", help="Path to metadata json file", default=None, type=str
+        "-r",
+        "--resolution",
+        type=str,
+        default="352x240",
+        help="Frame size in pixels for output video, write it as such: 352x240",
+    )
+    parser.add_argument(
+        "-m",
+        "--metadata",
+        help="Path to metadata json file used for deserialization",
+        default=None,
+        type=str,
     )
     parser.add_argument(
         "-o", "--output", default=getcwd(), help="Output directory path"
@@ -236,37 +232,29 @@ def main() -> None:
     if args.color_bitsize != 1 and args.color_bitsize % 8 != 0:
         parser.error("color-bitsize can be 1 or a multiple of 8")
 
-    if args.file:
-        inp_data_path = args.file
-    elif args.data_dir:
-        inp_data_path = args.data_dir
-    elif args.get_data:
-        inp_data_path = args.get_data
-    else:
-        parser.error("Unknown arguments")
-
-    if not ospath.exists(inp_data_path):
-        parser.error("input data path does not exist")
-
     if not ospath.isdir(args.output):
-        if (
-            "y"
-            != input(
-                f"Do you want to create missing output folder (y/N)? ({args.output})\n\n>>"
-            )
-            .strip()
-            .lower()
-        ):
-            parser.error("Cannot ensure output directory")
+        log.info("Creating missing output folder: %s", args.output)
         mkdir(args.output)
 
-    return (
-        __deserialize(inp_data_path, args.metadata, args.output)
-        if args.get_data
-        else __serialize(
-            inp_data_path, args.exp_factor, args.color_bitsize, args.output
+    if args.file:
+        # Serialize file
+
+        frame_width, frame_height = args.resolution.strip().split("x", maxsplit=1)
+        frame_width, frame_height = int(frame_width), int(frame_height)
+
+        serialize(
+            args.file,
+            args.exp_factor,
+            args.color_bitsize,
+            frame_width,
+            frame_height,
+            args.output,
         )
-    )
+    elif args.video_file:
+        # Deserialize video
+        deserialize(args.video_file, args.metadata, args.output)
+    else:
+        parser.error("Unknown arguments")
 
 
 if __name__ == "__main__":
